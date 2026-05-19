@@ -1,6 +1,6 @@
 {
   "name": "pair-reviewer",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "AI-powered PR reviewer GitHub Action using GitHub Models",
   "main": "dist/index.js",
   "scripts": {
