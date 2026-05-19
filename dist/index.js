@@ -58810,6 +58810,9 @@ async function postBlockedComment(reviewerToken, context5, unresolvedCount) {
   const octokit = getOctokit(reviewerToken);
   const body = `### PairReviewer \u2014 Waiting on unresolved feedback
 
+> [!NOTE]
+> Existing unresolved feedback is blocking a new full review pass.
+
 There ${unresolvedCount === 1 ? "is" : "are"} **${unresolvedCount}** unresolved review thread${unresolvedCount === 1 ? "" : "s"} from this reviewer. Please address the feedback and push new commits \u2014 I'll re-review automatically.`;
   await octokit.rest.issues.createComment({
     owner: context5.owner,
@@ -58836,6 +58839,9 @@ ${body}`;
 function buildReviewBody(summary, verdict, inlineCount) {
   return `<!-- This is an auto-generated comment by PairReviewer -->
 ${summary}
+
+> [!NOTE]
+> Review metadata for this run is included below.
 
 <details>
 <summary>Recent review info</summary>
