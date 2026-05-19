@@ -58,12 +58,16 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
+      models: read
 
     steps:
-      - uses: virulnirmala/PairReviewer@v1
+      - uses: iamvirul/PairReviewer@v1
         with:
           reviewer-token: ${{ secrets.REVIEWER_PAT }}
 ```
+
+> **Note:** `models: read` is required for the built-in `GITHUB_TOKEN` to call the GitHub Models API. Without it the action will fail when generating the review.
 
 That's it. Open a PR and the reviewer account will post its first review within seconds.
 
