@@ -1,5 +1,5 @@
 name: 'PairReviewer'
-description: 'AI-powered PR reviewer using GitHub Models. Reviews code, requests changes with inline comments, and approves once all feedback is addressed.'
+description: 'AI-powered PR reviewer using GitHub Models. Posts inline comments and approves PRs once all feedback is resolved.'
 author: 'virulnirmala'
 
 branding:
