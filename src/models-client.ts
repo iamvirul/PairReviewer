@@ -94,12 +94,14 @@ export async function generateReview(
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.1,
-      response_format: { type: 'json_object' },
     },
   });
 
   if (isUnexpected(response)) {
-    throw new Error(`GitHub Models API error: ${JSON.stringify(response.body.error)}`);
+    const detail = response.body
+      ? JSON.stringify(response.body.error)
+      : `HTTP ${response.status}`;
+    throw new Error(`GitHub Models API error: ${detail}`);
   }
 
   const rawContent = response.body.choices[0]?.message?.content;
