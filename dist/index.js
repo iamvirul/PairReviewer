@@ -58816,6 +58816,15 @@ There ${unresolvedCount === 1 ? "is" : "are"} **${unresolvedCount}** unresolved 
     body
   });
 }
+async function reactToComment(reviewerToken, owner, repo, commentId) {
+  const octokit = getOctokit(reviewerToken);
+  await octokit.rest.reactions.createForIssueComment({
+    owner,
+    repo,
+    comment_id: commentId,
+    content: "eyes"
+  });
+}
 function formatCommentBody(body, severity) {
   const prefix = severity === "blocking" ? "\u{1F6A8} **Blocking**" : severity === "suggestion" ? "\u{1F4A1} **Suggestion**" : "\u{1F527} **Nit**";
   return `${prefix}
@@ -62932,6 +62941,10 @@ async function run() {
       return;
     }
     core2.info(`@${reviewerLogin} mentioned in PR #${issue.number} \u2014 triggering review.`);
+    const commentId = context5.payload.comment?.id;
+    if (commentId) {
+      await reactToComment(reviewerToken, owner, repo, commentId);
+    }
   }
   const prContext = await extractPRContext(context5, owner, repo, githubToken);
   if (!prContext) {

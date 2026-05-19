@@ -8,6 +8,7 @@ import {
   getPRDiff,
   postReview,
   postBlockedComment,
+  reactToComment,
 } from './github-client';
 import { generateReview } from './models-client';
 import type { PRContext } from './types';
@@ -48,6 +49,12 @@ async function run(): Promise<void> {
     }
 
     core.info(`@${reviewerLogin} mentioned in PR #${issue.number} — triggering review.`);
+
+    // React with 👀 so the author knows the bot has picked up the request
+    const commentId = context.payload.comment?.id as number | undefined;
+    if (commentId) {
+      await reactToComment(reviewerToken, owner, repo, commentId);
+    }
   }
 
   const prContext = await extractPRContext(context, owner, repo, githubToken);

@@ -174,6 +174,21 @@ export async function postBlockedComment(
   });
 }
 
+export async function reactToComment(
+  reviewerToken: string,
+  owner: string,
+  repo: string,
+  commentId: number
+): Promise<void> {
+  const octokit = getOctokit(reviewerToken);
+  await octokit.rest.reactions.createForIssueComment({
+    owner,
+    repo,
+    comment_id: commentId,
+    content: 'eyes',
+  });
+}
+
 function formatCommentBody(body: string, severity: ReviewResult['comments'][number]['severity']): string {
   const prefix =
     severity === 'blocking'
