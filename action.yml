@@ -1,0 +1,47 @@
+name: 'PairReviewer'
+description: 'AI-powered PR reviewer using GitHub Models. Reviews code, requests changes with inline comments, and approves once all feedback is addressed.'
+author: 'virulnirmala'
+
+branding:
+  icon: 'eye'
+  color: 'blue'
+
+inputs:
+  reviewer-token:
+    description: >
+      Personal Access Token of the reviewer GitHub account.
+      Needs: pull_requests:write, contents:read.
+      Store as a repo secret (e.g. REVIEWER_PAT).
+    required: true
+
+  github-token:
+    description: >
+      Token used to read PR data and call GitHub Models API.
+      Defaults to the built-in GITHUB_TOKEN.
+    required: false
+    default: ${{ github.token }}
+
+  model:
+    description: >
+      GitHub Models model ID to use for the review.
+      See https://github.com/marketplace/models for available models.
+    required: false
+    default: 'openai/gpt-4.1'
+
+  approve-on-clean:
+    description: >
+      Set to 'false' to post a COMMENT instead of APPROVE when no issues are found.
+      Useful if you want a human final approval.
+    required: false
+    default: 'true'
+
+  max-diff-chars:
+    description: >
+      Maximum characters of diff to send to the model. Diffs exceeding this are truncated.
+      Increase for large PRs if your model supports it.
+    required: false
+    default: '120000'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
