@@ -62991,8 +62991,8 @@ async function run() {
   await postReview(reviewerToken, prContext, reviewResult);
 }
 async function generateReviewWithRetry(modelsToken, model, title, body, diff, maxDiffChars) {
-  let currentMaxDiffChars = maxDiffChars;
-  const maxAttempts = 3;
+  let currentMaxDiffChars = Math.min(maxDiffChars, diff.length);
+  const maxAttempts = 6;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       return await generateReview(modelsToken, model, title, body, diff, currentMaxDiffChars);
@@ -63000,7 +63000,10 @@ async function generateReviewWithRetry(modelsToken, model, title, body, diff, ma
       if (!isTokensLimitError(err) || attempt === maxAttempts) {
         throw err;
       }
-      const nextMaxDiffChars = Math.max(8e3, Math.floor(currentMaxDiffChars * 0.6));
+      const nextMaxDiffChars = Math.max(1500, Math.floor(currentMaxDiffChars * 0.6));
+      if (nextMaxDiffChars >= currentMaxDiffChars) {
+        throw err;
+      }
       core2.warning(
         `Model input exceeded token limit. Retrying with smaller diff slice: ${currentMaxDiffChars} -> ${nextMaxDiffChars} chars (attempt ${attempt + 1}/${maxAttempts}).`
       );

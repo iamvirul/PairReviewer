@@ -119,8 +119,10 @@ async function generateReviewWithRetry(
   diff: string,
   maxDiffChars: number
 ): Promise<ReviewResult> {
-  let currentMaxDiffChars = maxDiffChars;
-  const maxAttempts = 3;
+  // Start from the effective slice size actually sent to the model.
+  // Using maxDiffChars directly can keep retries above diff.length and cause no-op retries.
+  let currentMaxDiffChars = Math.min(maxDiffChars, diff.length);
+  const maxAttempts = 6;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -130,7 +132,11 @@ async function generateReviewWithRetry(
         throw err;
       }
 
-      const nextMaxDiffChars = Math.max(8000, Math.floor(currentMaxDiffChars * 0.6));
+      const nextMaxDiffChars = Math.max(1500, Math.floor(currentMaxDiffChars * 0.6));
+
+      if (nextMaxDiffChars >= currentMaxDiffChars) {
+        throw err;
+      }
       core.warning(
         `Model input exceeded token limit. Retrying with smaller diff slice: ` +
           `${currentMaxDiffChars} -> ${nextMaxDiffChars} chars (attempt ${attempt + 1}/${maxAttempts}).`
