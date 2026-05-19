@@ -62828,7 +62828,8 @@ var esm_default = createClient;
 var GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference";
 var VALID_VERDICTS = /* @__PURE__ */ new Set(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
 var VALID_SEVERITIES = /* @__PURE__ */ new Set(["blocking", "suggestion", "nit"]);
-var SYSTEM_PROMPT = `You are a senior software engineer performing a production-grade code review.
+var CHUNK_SIZE_CHARS = 1e4;
+var REVIEW_SYSTEM_PROMPT = `You are a senior software engineer performing a production-grade code review.
 
 Your responsibilities:
 - Catch bugs, logic errors, and off-by-one mistakes
@@ -62845,17 +62846,30 @@ Your style:
 - Do NOT comment on things outside the diff
 
 Respond ONLY with a valid JSON object. No markdown fences, no explanation outside the JSON.`;
-function buildUserPrompt(title, body, diff, maxDiffChars) {
-  const truncatedDiff = diff.length > maxDiffChars ? diff.slice(0, maxDiffChars) + `
+var SYNTHESIS_SYSTEM_PROMPT = `You are a principal reviewer synthesizing findings from multiple focused review passes.
 
-... [diff truncated at ${maxDiffChars} characters \u2014 focus review on what's shown]` : diff;
-  return `Review this pull request:
+Your responsibilities:
+- Merge and deduplicate findings from chunk-level analysis
+- Prioritize correctness, security, reliability, and performance issues
+- Remove low-signal or repetitive comments
+- Produce one coherent final verdict and summary
+
+Your style:
+- Be precise, actionable, and concise
+- Keep only comments that are likely to materially help the author
+- Do not invent file paths or line numbers
+
+Respond ONLY with a valid JSON object. No markdown fences, no explanation outside the JSON.`;
+function buildChunkReviewPrompt(title, body, chunkDiff, chunkIndex, chunkCount, wasTruncated, originalDiffLength, usedDiffLength) {
+  return `Review this pull request chunk:
 
 PR Title: ${title}
 PR Description: ${body || "(no description provided)"}
+Chunk: ${chunkIndex}/${chunkCount}
+Input scope: ${usedDiffLength}/${originalDiffLength} diff chars${wasTruncated ? " (truncated before chunking)" : ""}
 
 Diff:
-${truncatedDiff}
+${chunkDiff}
 
 Respond with exactly this JSON structure:
 {
@@ -62882,17 +62896,84 @@ Inline comment rules:
 - Only reference file paths and line numbers that appear in the diff above.
 - Do not fabricate line numbers. If unsure of the exact line, omit the inline comment and mention it in the summary instead.`;
 }
+function buildSynthesisPrompt(title, body, chunkResults) {
+  return `Synthesize these chunk-level review findings into one final review for the pull request.
+
+PR Title: ${title}
+PR Description: ${body || "(no description provided)"}
+
+Chunk findings JSON:
+${JSON.stringify(chunkResults, null, 2)}
+
+Respond with exactly this JSON structure:
+{
+  "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+  "summary": "2\u20134 sentence overall assessment covering what the PR does and your verdict rationale",
+  "comments": [
+    {
+      "path": "relative/path/to/file.ts",
+      "line": 42,
+      "body": "Precise description of the issue and how to fix it",
+      "severity": "blocking" | "suggestion" | "nit"
+    }
+  ]
+}
+
+Verdict rules:
+- APPROVE: No significant issues. Code is correct, secure, and production-ready.
+- REQUEST_CHANGES: One or more blocking issues (bugs, security holes, missing critical error handling).
+- COMMENT: Only minor suggestions or nits. Nothing that blocks merging.
+- If any comment has severity "blocking", the verdict MUST be REQUEST_CHANGES.
+- An empty comments array is valid and expected for a clean APPROVE.
+
+Inline comment rules:
+- Only reference file paths and line numbers present in the original chunk findings.
+- Deduplicate similar comments and keep the most actionable version.`;
+}
+function prepareDiff(diff, maxDiffChars) {
+  if (diff.length <= maxDiffChars) {
+    return { usedDiff: diff, wasTruncated: false };
+  }
+  return { usedDiff: diff.slice(0, maxDiffChars), wasTruncated: true };
+}
+function splitDiffIntoChunks(diff) {
+  if (!diff) return [];
+  const chunks = [];
+  for (let start = 0; start < diff.length; start += CHUNK_SIZE_CHARS) {
+    chunks.push(diff.slice(start, start + CHUNK_SIZE_CHARS));
+  }
+  return chunks;
+}
 async function generateReview(githubToken, model, title, body, diff, maxDiffChars) {
   const client = esm_default(
     GITHUB_MODELS_ENDPOINT,
     new AzureKeyCredential(githubToken)
   );
-  const userPrompt = buildUserPrompt(title, body, diff, maxDiffChars);
+  const { usedDiff, wasTruncated } = prepareDiff(diff, maxDiffChars);
+  const diffChunks = splitDiffIntoChunks(usedDiff);
+  const chunkResults = [];
+  for (let i = 0; i < diffChunks.length; i += 1) {
+    const chunkPrompt = buildChunkReviewPrompt(
+      title,
+      body,
+      diffChunks[i],
+      i + 1,
+      diffChunks.length,
+      wasTruncated,
+      diff.length,
+      usedDiff.length
+    );
+    chunkResults.push(await callReviewModel(client, model, REVIEW_SYSTEM_PROMPT, chunkPrompt));
+  }
+  const synthesisPrompt = buildSynthesisPrompt(title, body, chunkResults);
+  return callReviewModel(client, model, SYNTHESIS_SYSTEM_PROMPT, synthesisPrompt);
+}
+async function callReviewModel(client, model, systemPrompt, userPrompt) {
   const response = await client.path("/chat/completions").post({
     body: {
       model,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
       temperature: 0.1
