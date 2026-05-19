@@ -12,15 +12,27 @@ vi.mock('@actions/github', () => ({
   context: { repo: { owner: 'acme', repo: 'app' }, payload: {} },
   getOctokit: vi.fn(),
 }));
-vi.mock('../../src/github-client');
+vi.mock('../../src/github-client', () => ({
+  getReviewerLogin: vi.fn(),
+  getReviewThreads: vi.fn(),
+  hasBlockingUnresolvedThreads: vi.fn(),
+  getPRDetails: vi.fn(),
+  getPRDiff: vi.fn(),
+  postReview: vi.fn(),
+  postBlockedComment: vi.fn(),
+}));
 vi.mock('../../src/models-client');
 
 // ---------------------------------------------------------------------------
 // extractPRContext
 // ---------------------------------------------------------------------------
 
-function makeGithubContext(payload: Record<string, unknown>): typeof github.context {
+function makeGithubContext(
+  eventName: string,
+  payload: Record<string, unknown>
+): typeof github.context {
   return {
+    eventName,
     repo: { owner: 'acme', repo: 'app' },
     payload,
   } as unknown as typeof github.context;
@@ -29,8 +41,8 @@ function makeGithubContext(payload: Record<string, unknown>): typeof github.cont
 describe('extractPRContext', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('extracts context from a pull_request event payload', () => {
-    const ctx = makeGithubContext({
+  it('extracts context from a pull_request event payload', async () => {
+    const ctx = makeGithubContext('pull_request', {
       pull_request: {
         number: 7,
         title: 'fix: bug',
@@ -39,7 +51,7 @@ describe('extractPRContext', () => {
       },
     });
 
-    const result = extractPRContext(ctx, 'acme', 'app');
+    const result = await extractPRContext(ctx, 'acme', 'app', 'token');
     expect(result).toEqual({
       owner: 'acme',
       repo: 'app',
@@ -50,8 +62,8 @@ describe('extractPRContext', () => {
     });
   });
 
-  it('extracts context from a pull_request_review event payload', () => {
-    const ctx = makeGithubContext({
+  it('extracts context from a pull_request_review event payload', async () => {
+    const ctx = makeGithubContext('pull_request_review', {
       review: { state: 'approved' },
       pull_request: {
         number: 12,
@@ -61,42 +73,64 @@ describe('extractPRContext', () => {
       },
     });
 
-    const result = extractPRContext(ctx, 'acme', 'app');
+    const result = await extractPRContext(ctx, 'acme', 'app', 'token');
     expect(result).not.toBeNull();
     expect(result!.prNumber).toBe(12);
     expect(result!.body).toBe('');
   });
 
-  it('returns null when payload has no pull_request', () => {
-    const ctx = makeGithubContext({ action: 'push' });
-    expect(extractPRContext(ctx, 'acme', 'app')).toBeNull();
-  });
-
-  it('coerces a null body to an empty string', () => {
-    const ctx = makeGithubContext({
-      pull_request: {
-        number: 1,
-        title: 'title',
-        body: null,
-        head: { sha: 'abc' },
-      },
+  it('fetches PR details from API for issue_comment event', async () => {
+    const { getPRDetails } = await import('../../src/github-client');
+    vi.mocked(getPRDetails).mockResolvedValue({
+      title: 'feat: api',
+      body: 'Adds an API.',
+      headSha: 'abc123',
     });
 
-    const result = extractPRContext(ctx, 'acme', 'app');
+    const ctx = makeGithubContext('issue_comment', {
+      issue: { number: 5, pull_request: { url: 'https://...' } },
+      comment: { body: '@reviewer-bot please review' },
+    });
+
+    const result = await extractPRContext(ctx, 'acme', 'app', 'token');
+    expect(result).not.toBeNull();
+    expect(result!.prNumber).toBe(5);
+    expect(result!.title).toBe('feat: api');
+    expect(result!.headSha).toBe('abc123');
+    expect(getPRDetails).toHaveBeenCalledWith('token', 'acme', 'app', 5);
+  });
+
+  it('returns null for issue_comment on a plain issue (not a PR)', async () => {
+    const ctx = makeGithubContext('issue_comment', {
+      issue: { number: 3 },
+      comment: { body: '@reviewer-bot please review' },
+    });
+
+    const result = await extractPRContext(ctx, 'acme', 'app', 'token');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when payload has no pull_request and is not issue_comment', async () => {
+    const ctx = makeGithubContext('push', {});
+    const result = await extractPRContext(ctx, 'acme', 'app', 'token');
+    expect(result).toBeNull();
+  });
+
+  it('coerces a null body to an empty string', async () => {
+    const ctx = makeGithubContext('pull_request', {
+      pull_request: { number: 1, title: 'title', body: null, head: { sha: 'abc' } },
+    });
+
+    const result = await extractPRContext(ctx, 'acme', 'app', 'token');
     expect(result!.body).toBe('');
   });
 
-  it('uses the owner and repo passed as arguments, not from context', () => {
-    const ctx = makeGithubContext({
-      pull_request: {
-        number: 1,
-        title: 'title',
-        body: '',
-        head: { sha: 'abc' },
-      },
+  it('uses the owner and repo passed as arguments', async () => {
+    const ctx = makeGithubContext('pull_request', {
+      pull_request: { number: 1, title: 'title', body: '', head: { sha: 'abc' } },
     });
 
-    const result = extractPRContext(ctx, 'org-override', 'repo-override');
+    const result = await extractPRContext(ctx, 'org-override', 'repo-override', 'token');
     expect(result!.owner).toBe('org-override');
     expect(result!.repo).toBe('repo-override');
   });

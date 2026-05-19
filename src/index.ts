@@ -4,6 +4,7 @@ import {
   getReviewerLogin,
   getReviewThreads,
   hasBlockingUnresolvedThreads,
+  getPRDetails,
   getPRDiff,
   postReview,
   postBlockedComment,
@@ -21,23 +22,41 @@ async function run(): Promise<void> {
   const { context } = github;
   const { owner, repo } = context.repo;
 
-  const prContext = extractPRContext(context, owner, repo);
+  const reviewerLogin = await getReviewerLogin(reviewerToken);
+  core.info(`Reviewer account: @${reviewerLogin}`);
+
+  // Skip events triggered by the reviewer bot itself to prevent loops
+  const eventSender = context.payload.sender?.login as string | undefined;
+  if (eventSender === reviewerLogin) {
+    core.info('Event was triggered by the reviewer account itself. Skipping to prevent loops.');
+    return;
+  }
+
+  // For issue_comment events: only proceed if the comment mentions the reviewer
+  if (context.eventName === 'issue_comment') {
+    const commentBody = (context.payload.comment?.body as string | undefined) ?? '';
+    if (!commentBody.includes(`@${reviewerLogin}`)) {
+      core.info(`Comment does not mention @${reviewerLogin}. Skipping.`);
+      return;
+    }
+
+    // Only act on PR comments, not plain issue comments
+    const issue = context.payload.issue as { number: number; pull_request?: unknown } | undefined;
+    if (!issue?.pull_request) {
+      core.info('Comment is on an issue, not a pull request. Skipping.');
+      return;
+    }
+
+    core.info(`@${reviewerLogin} mentioned in PR #${issue.number} — triggering review.`);
+  }
+
+  const prContext = await extractPRContext(context, owner, repo, githubToken);
   if (!prContext) {
     core.info('Event does not contain a pull request. Skipping.');
     return;
   }
 
   core.info(`PairReviewer — PR #${prContext.prNumber}: "${prContext.title}"`);
-
-  const reviewerLogin = await getReviewerLogin(reviewerToken);
-  core.info(`Reviewer account: @${reviewerLogin}`);
-
-  // Skip if this event was triggered by the reviewer bot itself (prevents loops)
-  const eventSender = context.payload.sender?.login as string | undefined;
-  if (eventSender === reviewerLogin) {
-    core.info('Event was triggered by the reviewer account itself. Skipping to prevent loops.');
-    return;
-  }
 
   const threads = await getReviewThreads(githubToken, prContext);
   core.info(`Found ${threads.length} review thread(s)`);
@@ -75,7 +94,6 @@ async function run(): Promise<void> {
       `${reviewResult.comments.length} comment(s)`
   );
 
-  // Downgrade APPROVE to COMMENT when approve-on-clean is disabled
   if (!approveOnClean && reviewResult.verdict === 'APPROVE') {
     reviewResult.verdict = 'COMMENT';
     core.info('approve-on-clean=false — downgraded APPROVE to COMMENT');
@@ -91,23 +109,42 @@ export interface PRPayload {
   head: { sha: string };
 }
 
-export function extractPRContext(
+export async function extractPRContext(
   context: typeof github.context,
   owner: string,
-  repo: string
-): PRContext | null {
-  // Both pull_request and pull_request_review events carry a pull_request object
-  const rawPR = (context.payload.pull_request ?? context.payload['pull_request']) as PRPayload | undefined;
-  if (!rawPR) return null;
+  repo: string,
+  githubToken: string
+): Promise<PRContext | null> {
+  // pull_request and pull_request_review events carry a pull_request object directly
+  const rawPR = context.payload.pull_request as PRPayload | undefined;
+  if (rawPR) {
+    return {
+      owner,
+      repo,
+      prNumber: rawPR.number,
+      title: rawPR.title,
+      body: rawPR.body ?? '',
+      headSha: rawPR.head.sha,
+    };
+  }
 
-  return {
-    owner,
-    repo,
-    prNumber: rawPR.number,
-    title: rawPR.title,
-    body: rawPR.body ?? '',
-    headSha: rawPR.head.sha,
-  };
+  // issue_comment events: fetch the PR details via API since the payload only has issue data
+  if (context.eventName === 'issue_comment') {
+    const issue = context.payload.issue as { number: number; pull_request?: unknown } | undefined;
+    if (!issue?.pull_request) return null;
+
+    const details = await getPRDetails(githubToken, owner, repo, issue.number);
+    return {
+      owner,
+      repo,
+      prNumber: issue.number,
+      title: details.title,
+      body: details.body,
+      headSha: details.headSha,
+    };
+  }
+
+  return null;
 }
 
 run().catch((err: unknown) => {

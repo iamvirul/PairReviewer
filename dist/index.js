@@ -58750,6 +58750,15 @@ function hasBlockingUnresolvedThreads(threads, reviewerLogin) {
     (t) => !t.isResolved && !t.isOutdated && t.authorLogin === reviewerLogin
   );
 }
+async function getPRDetails(githubToken, owner, repo, prNumber) {
+  const octokit = getOctokit(githubToken);
+  const { data } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
+  return {
+    title: data.title,
+    body: data.body ?? "",
+    headSha: data.head.sha
+  };
+}
 async function getPRDiff(githubToken, context5) {
   const octokit = getOctokit(githubToken);
   const response = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
@@ -62904,12 +62913,6 @@ async function run() {
   const maxDiffChars = parseInt(core2.getInput("max-diff-chars") || "120000", 10);
   const { context: context5 } = github_exports;
   const { owner, repo } = context5.repo;
-  const prContext = extractPRContext(context5, owner, repo);
-  if (!prContext) {
-    core2.info("Event does not contain a pull request. Skipping.");
-    return;
-  }
-  core2.info(`PairReviewer \u2014 PR #${prContext.prNumber}: "${prContext.title}"`);
   const reviewerLogin = await getReviewerLogin(reviewerToken);
   core2.info(`Reviewer account: @${reviewerLogin}`);
   const eventSender = context5.payload.sender?.login;
@@ -62917,6 +62920,25 @@ async function run() {
     core2.info("Event was triggered by the reviewer account itself. Skipping to prevent loops.");
     return;
   }
+  if (context5.eventName === "issue_comment") {
+    const commentBody = context5.payload.comment?.body ?? "";
+    if (!commentBody.includes(`@${reviewerLogin}`)) {
+      core2.info(`Comment does not mention @${reviewerLogin}. Skipping.`);
+      return;
+    }
+    const issue = context5.payload.issue;
+    if (!issue?.pull_request) {
+      core2.info("Comment is on an issue, not a pull request. Skipping.");
+      return;
+    }
+    core2.info(`@${reviewerLogin} mentioned in PR #${issue.number} \u2014 triggering review.`);
+  }
+  const prContext = await extractPRContext(context5, owner, repo, githubToken);
+  if (!prContext) {
+    core2.info("Event does not contain a pull request. Skipping.");
+    return;
+  }
+  core2.info(`PairReviewer \u2014 PR #${prContext.prNumber}: "${prContext.title}"`);
   const threads = await getReviewThreads(githubToken, prContext);
   core2.info(`Found ${threads.length} review thread(s)`);
   const blocked = hasBlockingUnresolvedThreads(threads, reviewerLogin);
@@ -62952,17 +62974,32 @@ async function run() {
   }
   await postReview(reviewerToken, prContext, reviewResult);
 }
-function extractPRContext(context5, owner, repo) {
-  const rawPR = context5.payload.pull_request ?? context5.payload["pull_request"];
-  if (!rawPR) return null;
-  return {
-    owner,
-    repo,
-    prNumber: rawPR.number,
-    title: rawPR.title,
-    body: rawPR.body ?? "",
-    headSha: rawPR.head.sha
-  };
+async function extractPRContext(context5, owner, repo, githubToken) {
+  const rawPR = context5.payload.pull_request;
+  if (rawPR) {
+    return {
+      owner,
+      repo,
+      prNumber: rawPR.number,
+      title: rawPR.title,
+      body: rawPR.body ?? "",
+      headSha: rawPR.head.sha
+    };
+  }
+  if (context5.eventName === "issue_comment") {
+    const issue = context5.payload.issue;
+    if (!issue?.pull_request) return null;
+    const details = await getPRDetails(githubToken, owner, repo, issue.number);
+    return {
+      owner,
+      repo,
+      prNumber: issue.number,
+      title: details.title,
+      body: details.body,
+      headSha: details.headSha
+    };
+  }
+  return null;
 }
 run().catch((err) => {
   const message = err instanceof Error ? err.message : String(err);

@@ -78,6 +78,21 @@ export function hasBlockingUnresolvedThreads(
   );
 }
 
+export async function getPRDetails(
+  githubToken: string,
+  owner: string,
+  repo: string,
+  prNumber: number
+): Promise<{ title: string; body: string; headSha: string }> {
+  const octokit = getOctokit(githubToken);
+  const { data } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
+  return {
+    title: data.title,
+    body: data.body ?? '',
+    headSha: data.head.sha,
+  };
+}
+
 export async function getPRDiff(githubToken: string, context: PRContext): Promise<string> {
   const octokit = getOctokit(githubToken);
 

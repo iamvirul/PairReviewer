@@ -47,6 +47,8 @@ on:
     types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted]
+  issue_comment:
+    types: [created]
   workflow_dispatch:
 
 jobs:
