@@ -163,6 +163,8 @@ export async function postBlockedComment(
 
   const body =
     `### PairReviewer — Waiting on unresolved feedback\n\n` +
+    `> [!NOTE]\n` +
+    `> Existing unresolved feedback is blocking a new full review pass.\n\n` +
     `There ${unresolvedCount === 1 ? 'is' : 'are'} **${unresolvedCount}** unresolved review ` +
     `thread${unresolvedCount === 1 ? '' : 's'} from this reviewer. ` +
     `Please address the feedback and push new commits — I'll re-review automatically.`;
@@ -204,6 +206,8 @@ function buildReviewBody(summary: string, verdict: ReviewResult['verdict'], inli
   return (
     `<!-- This is an auto-generated comment by PairReviewer -->\n` +
     `${summary}\n\n` +
+    `> [!NOTE]\n` +
+    `> Review metadata for this run is included below.\n\n` +
     `<details>\n` +
     `<summary>Recent review info</summary>\n\n` +
     `Verdict: \`${verdict}\`\n\n` +

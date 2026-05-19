@@ -286,6 +286,7 @@ describe('postReview', () => {
     });
     expect(call.body).toContain('<summary>Recent review info</summary>');
     expect(call.body).toContain('Verdict: `APPROVE`');
+    expect(call.body).toContain('[!NOTE]');
   });
 
   it('posts REQUEST_CHANGES with formatted inline comments', async () => {
@@ -362,6 +363,7 @@ describe('postBlockedComment', () => {
     expect(call.issue_number).toBe(42);
     expect(call.body).toContain('3');
     expect(call.body).toContain('unresolved');
+    expect(call.body).toContain('[!NOTE]');
   });
 
   it('uses singular grammar for exactly one thread', async () => {
