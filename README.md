@@ -76,10 +76,27 @@ That's it. Open a PR and the reviewer account will post its first review within 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `reviewer-token` | Yes | (required) | PAT of the reviewer GitHub account |
-| `github-token` | No | `${{ github.token }}` | Token for reading PR data and calling GitHub Models |
+| `github-token` | No | `${{ github.token }}` | Token for reading PR data (threads, diff) |
+| `models-token` | No | falls back to `github-token` | Token for calling GitHub Models API. Required for org repos where `GITHUB_TOKEN` lacks Models access — use a personal PAT from an account with GitHub Models access |
 | `model` | No | `openai/gpt-4.1` | GitHub Models model ID |
 | `approve-on-clean` | No | `true` | Set to `false` to post COMMENT instead of APPROVE |
 | `max-diff-chars` | No | `120000` | Max diff characters sent to the model |
+
+## Using in an Organisation Repo
+
+The built-in `GITHUB_TOKEN` in org repos may not have access to GitHub Models, resulting in a `403` error. Fix it by passing a personal PAT as `models-token`:
+
+1. Generate a classic PAT on any personal account that has GitHub Models access (no extra scopes needed)
+2. Add it as a secret in your org repo — e.g. `MODELS_PAT`
+3. Pass it to the action:
+
+```yaml
+    steps:
+      - uses: iamvirul/PairReviewer@v1
+        with:
+          reviewer-token: ${{ secrets.REVIEWER_PAT }}
+          models-token: ${{ secrets.MODELS_PAT }}
+```
 
 ## Supported Models
 

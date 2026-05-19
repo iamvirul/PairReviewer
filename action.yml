@@ -16,10 +16,19 @@ inputs:
 
   github-token:
     description: >
-      Token used to read PR data and call GitHub Models API.
+      Token used to read PR data (threads, diff).
       Defaults to the built-in GITHUB_TOKEN.
     required: false
     default: ${{ github.token }}
+
+  models-token:
+    description: >
+      Token used to call the GitHub Models API.
+      Required for org repos where the built-in GITHUB_TOKEN lacks Models access.
+      Use a personal PAT (classic, no extra scopes needed) from an account with GitHub Models access.
+      Defaults to github-token if not set.
+    required: false
+    default: ''
 
   model:
     description: >

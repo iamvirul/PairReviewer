@@ -62917,6 +62917,7 @@ function parseAndValidateReview(raw) {
 async function run() {
   const reviewerToken = core2.getInput("reviewer-token", { required: true });
   const githubToken = core2.getInput("github-token", { required: true });
+  const modelsToken = core2.getInput("models-token") || githubToken;
   const model = core2.getInput("model") || "openai/gpt-4.1";
   const approveOnClean = core2.getInput("approve-on-clean") !== "false";
   const maxDiffChars = parseInt(core2.getInput("max-diff-chars") || "120000", 10);
@@ -62971,7 +62972,7 @@ async function run() {
   }
   core2.info(`Diff size: ${diff.length} chars. Generating review with model: ${model}`);
   const reviewResult = await generateReview(
-    githubToken,
+    modelsToken,
     model,
     prContext.title,
     prContext.body,

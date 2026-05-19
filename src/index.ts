@@ -16,6 +16,7 @@ import type { PRContext } from './types';
 async function run(): Promise<void> {
   const reviewerToken = core.getInput('reviewer-token', { required: true });
   const githubToken = core.getInput('github-token', { required: true });
+  const modelsToken = core.getInput('models-token') || githubToken;
   const model = core.getInput('model') || 'openai/gpt-4.1';
   const approveOnClean = core.getInput('approve-on-clean') !== 'false';
   const maxDiffChars = parseInt(core.getInput('max-diff-chars') || '120000', 10);
@@ -88,7 +89,7 @@ async function run(): Promise<void> {
 
   core.info(`Diff size: ${diff.length} chars. Generating review with model: ${model}`);
   const reviewResult = await generateReview(
-    githubToken,
+    modelsToken,
     model,
     prContext.title,
     prContext.body,
