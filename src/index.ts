@@ -18,7 +18,7 @@ async function run(): Promise<void> {
   const githubToken = core.getInput('github-token', { required: true });
   const modelsToken = core.getInput('models-token') || githubToken;
   const modelInput = core.getInput('model');
-  const model = normalizeModelInput(modelInput) || 'openai/gpt-5';
+  const model = normalizeModelInput(modelInput) || 'openai/gpt-4.1';
   const approveOnClean = core.getInput('approve-on-clean') !== 'false';
   const maxDiffChars = parseInt(core.getInput('max-diff-chars') || '120000', 10);
 
@@ -122,12 +122,22 @@ async function generateReviewWithRetry(
   // Start from the effective slice size actually sent to the model.
   // Using maxDiffChars directly can keep retries above diff.length and cause no-op retries.
   let currentMaxDiffChars = Math.min(maxDiffChars, diff.length);
+  let currentModel = model;
   const maxAttempts = 6;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return await generateReview(modelsToken, model, title, body, diff, currentMaxDiffChars);
+      return await generateReview(modelsToken, currentModel, title, body, diff, currentMaxDiffChars);
     } catch (err: unknown) {
+      if (isUnavailableModelError(err) && currentModel === 'openai/gpt-5') {
+        currentModel = 'openai/gpt-4.1';
+        core.warning(
+          `Model ${model} is unavailable for this token/account. ` +
+            `Retrying with fallback model: ${currentModel}.`
+        );
+        continue;
+      }
+
       if (!isTokensLimitError(err) || attempt === maxAttempts) {
         throw err;
       }
@@ -165,6 +175,11 @@ export function normalizeModelInput(input: string): string {
 function isTokensLimitError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return err.message.includes('tokens_limit_reached');
+}
+
+function isUnavailableModelError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.message.includes('unavailable_model');
 }
 
 export interface PRPayload {

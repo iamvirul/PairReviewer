@@ -58778,13 +58778,14 @@ async function postReview(reviewerToken, context5, result) {
     body: formatCommentBody(c.body, c.severity)
   }));
   try {
+    const reviewBody = buildReviewBody(result.summary, result.verdict, inlineComments.length);
     await octokit.rest.pulls.createReview({
       owner: context5.owner,
       repo: context5.repo,
       pull_number: context5.prNumber,
       commit_id: context5.headSha,
       event: result.verdict,
-      body: result.summary,
+      body: reviewBody,
       comments: inlineComments
     });
     core.info(`Review posted: ${result.verdict} with ${inlineComments.length} inline comment(s)`);
@@ -58792,7 +58793,7 @@ async function postReview(reviewerToken, context5, result) {
     core.warning(
       `Failed to post review with inline comments (${String(err)}). Retrying body-only.`
     );
-    const fallbackBody = buildFallbackBody(result.summary, inlineComments);
+    const fallbackBody = buildFallbackBody(result.summary, result.verdict, inlineComments);
     await octokit.rest.pulls.createReview({
       owner: context5.owner,
       repo: context5.repo,
@@ -58827,20 +58828,44 @@ async function reactToComment(reviewerToken, owner, repo, commentId) {
   });
 }
 function formatCommentBody(body, severity) {
-  const prefix = severity === "blocking" ? "\u{1F6A8} **Blocking**" : severity === "suggestion" ? "\u{1F4A1} **Suggestion**" : "\u{1F527} **Nit**";
+  const prefix = severity === "blocking" ? "**Severity: Blocking**" : severity === "suggestion" ? "**Severity: Suggestion**" : "**Severity: Nit**";
   return `${prefix}
 
 ${body}`;
 }
-function buildFallbackBody(summary, comments) {
-  if (comments.length === 0) return summary;
+function buildReviewBody(summary, verdict, inlineCount) {
+  return `<!-- This is an auto-generated comment by PairReviewer -->
+${summary}
+
+<details>
+<summary>Recent review info</summary>
+
+Verdict: \`${verdict}\`
+
+Inline comments: \`${inlineCount}\`
+</details>`;
+}
+function buildFallbackBody(summary, verdict, comments) {
+  if (comments.length === 0) return buildReviewBody(summary, verdict, 0);
   const commentBlock = comments.map((c) => `**\`${c.path}:${c.line}\`**
 ${c.body}`).join("\n\n---\n\n");
-  return `${summary}
+  return `<!-- This is an auto-generated comment by PairReviewer -->
+${summary}
+
+> [!WARNING]
+> Inline comments could not be posted on this run. The feedback is included below.
+
+<details>
+<summary>Recent review info</summary>
+
+Verdict: \`${verdict}\`
+
+Inline comments attempted: \`${comments.length}\`
+</details>
 
 ---
 
-### Inline Feedback
+### Inline feedback
 
 ${commentBlock}`;
 }
@@ -62920,7 +62945,7 @@ async function run() {
   const githubToken = core2.getInput("github-token", { required: true });
   const modelsToken = core2.getInput("models-token") || githubToken;
   const modelInput = core2.getInput("model");
-  const model = normalizeModelInput(modelInput) || "openai/gpt-5";
+  const model = normalizeModelInput(modelInput) || "openai/gpt-4.1";
   const approveOnClean = core2.getInput("approve-on-clean") !== "false";
   const maxDiffChars = parseInt(core2.getInput("max-diff-chars") || "120000", 10);
   const { context: context5 } = github_exports;
@@ -62992,11 +63017,19 @@ async function run() {
 }
 async function generateReviewWithRetry(modelsToken, model, title, body, diff, maxDiffChars) {
   let currentMaxDiffChars = Math.min(maxDiffChars, diff.length);
+  let currentModel = model;
   const maxAttempts = 6;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return await generateReview(modelsToken, model, title, body, diff, currentMaxDiffChars);
+      return await generateReview(modelsToken, currentModel, title, body, diff, currentMaxDiffChars);
     } catch (err) {
+      if (isUnavailableModelError(err) && currentModel === "openai/gpt-5") {
+        currentModel = "openai/gpt-4.1";
+        core2.warning(
+          `Model ${model} is unavailable for this token/account. Retrying with fallback model: ${currentModel}.`
+        );
+        continue;
+      }
       if (!isTokensLimitError(err) || attempt === maxAttempts) {
         throw err;
       }
@@ -63025,6 +63058,10 @@ function normalizeModelInput(input) {
 function isTokensLimitError(err) {
   if (!(err instanceof Error)) return false;
   return err.message.includes("tokens_limit_reached");
+}
+function isUnavailableModelError(err) {
+  if (!(err instanceof Error)) return false;
+  return err.message.includes("unavailable_model");
 }
 async function extractPRContext(context5, owner, repo, githubToken) {
   const rawPR = context5.payload.pull_request;
