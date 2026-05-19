@@ -122,13 +122,14 @@ export async function postReview(
     }));
 
   try {
+    const reviewBody = buildReviewBody(result.summary, result.verdict, inlineComments.length);
     await octokit.rest.pulls.createReview({
       owner: context.owner,
       repo: context.repo,
       pull_number: context.prNumber,
       commit_id: context.headSha,
       event: result.verdict,
-      body: result.summary,
+      body: reviewBody,
       comments: inlineComments,
     });
     core.info(`Review posted: ${result.verdict} with ${inlineComments.length} inline comment(s)`);
@@ -139,7 +140,7 @@ export async function postReview(
       `Failed to post review with inline comments (${String(err)}). Retrying body-only.`
     );
 
-    const fallbackBody = buildFallbackBody(result.summary, inlineComments);
+    const fallbackBody = buildFallbackBody(result.summary, result.verdict, inlineComments);
     await octokit.rest.pulls.createReview({
       owner: context.owner,
       repo: context.repo,
@@ -192,22 +193,48 @@ export async function reactToComment(
 function formatCommentBody(body: string, severity: ReviewResult['comments'][number]['severity']): string {
   const prefix =
     severity === 'blocking'
-      ? '🚨 **Blocking**'
+      ? '**Severity: Blocking**'
       : severity === 'suggestion'
-        ? '💡 **Suggestion**'
-        : '🔧 **Nit**';
+        ? '**Severity: Suggestion**'
+        : '**Severity: Nit**';
   return `${prefix}\n\n${body}`;
+}
+
+function buildReviewBody(summary: string, verdict: ReviewResult['verdict'], inlineCount: number): string {
+  return (
+    `<!-- This is an auto-generated comment by PairReviewer -->\n` +
+    `${summary}\n\n` +
+    `<details>\n` +
+    `<summary>Recent review info</summary>\n\n` +
+    `Verdict: \`${verdict}\`\n\n` +
+    `Inline comments: \`${inlineCount}\`\n` +
+    `</details>`
+  );
 }
 
 function buildFallbackBody(
   summary: string,
+  verdict: ReviewResult['verdict'],
   comments: Array<{ path: string; line: number; body: string }>
 ): string {
-  if (comments.length === 0) return summary;
+  if (comments.length === 0) return buildReviewBody(summary, verdict, 0);
 
   const commentBlock = comments
     .map((c) => `**\`${c.path}:${c.line}\`**\n${c.body}`)
     .join('\n\n---\n\n');
 
-  return `${summary}\n\n---\n\n### Inline Feedback\n\n${commentBlock}`;
+  return (
+    `<!-- This is an auto-generated comment by PairReviewer -->\n` +
+    `${summary}\n\n` +
+    `> [!WARNING]\n` +
+    `> Inline comments could not be posted on this run. The feedback is included below.\n\n` +
+    `<details>\n` +
+    `<summary>Recent review info</summary>\n\n` +
+    `Verdict: \`${verdict}\`\n\n` +
+    `Inline comments attempted: \`${comments.length}\`\n` +
+    `</details>\n\n` +
+    `---\n\n` +
+    `### Inline feedback\n\n` +
+    `${commentBlock}`
+  );
 }

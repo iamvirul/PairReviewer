@@ -281,9 +281,11 @@ describe('postReview', () => {
       pull_number: 42,
       commit_id: 'abc123',
       event: 'APPROVE',
-      body: 'Looks great.',
+      body: expect.stringContaining('Looks great.'),
       comments: [],
     });
+    expect(call.body).toContain('<summary>Recent review info</summary>');
+    expect(call.body).toContain('Verdict: `APPROVE`');
   });
 
   it('posts REQUEST_CHANGES with formatted inline comments', async () => {
@@ -295,8 +297,8 @@ describe('postReview', () => {
 
     const call = vi.mocked(octokit.rest.pulls.createReview).mock.calls[0]![0];
     expect(call.comments).toHaveLength(2);
-    expect(call.comments![0]!.body).toContain('🚨 **Blocking**');
-    expect(call.comments![1]!.body).toContain('🔧 **Nit**');
+    expect(call.comments![0]!.body).toContain('**Severity: Blocking**');
+    expect(call.comments![1]!.body).toContain('**Severity: Nit**');
   });
 
   it('falls back to body-only review when inline comments are rejected', async () => {
@@ -314,6 +316,7 @@ describe('postReview', () => {
     );
     const fallbackCall = vi.mocked(octokit.rest.pulls.createReview).mock.calls[1]![0];
     expect(fallbackCall.comments).toEqual([]);
+    expect(fallbackCall.body).toContain('[!WARNING]');
     expect(fallbackCall.body).toContain('src/foo.ts:10');
     expect(fallbackCall.body).toContain('src/bar.ts:5');
   });
