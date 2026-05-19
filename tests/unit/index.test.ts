@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as github from '@actions/github';
-import { extractPRContext } from '../../src/index';
+import { extractPRContext, normalizeModelInput } from '../../src/index';
 
 vi.mock('@actions/core', () => ({
   getInput: vi.fn(),
@@ -133,5 +133,24 @@ describe('extractPRContext', () => {
     const result = await extractPRContext(ctx, 'org-override', 'repo-override', 'token');
     expect(result!.owner).toBe('org-override');
     expect(result!.repo).toBe('repo-override');
+  });
+});
+
+describe('normalizeModelInput', () => {
+  it('returns empty string for empty or whitespace input', () => {
+    expect(normalizeModelInput('')).toBe('');
+    expect(normalizeModelInput('   ')).toBe('');
+  });
+
+  it('removes wrapping double quotes', () => {
+    expect(normalizeModelInput('"openai/gpt-5"')).toBe('openai/gpt-5');
+  });
+
+  it('removes wrapping single quotes', () => {
+    expect(normalizeModelInput("'openai/gpt-5'")).toBe('openai/gpt-5');
+  });
+
+  it('keeps unquoted values unchanged after trim', () => {
+    expect(normalizeModelInput('  openai/gpt-5  ')).toBe('openai/gpt-5');
   });
 });

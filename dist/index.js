@@ -54945,7 +54945,8 @@ var require_state = __commonJS({
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
-  extractPRContext: () => extractPRContext
+  extractPRContext: () => extractPRContext,
+  normalizeModelInput: () => normalizeModelInput
 });
 module.exports = __toCommonJS(index_exports);
 var core2 = __toESM(require_core());
@@ -62918,7 +62919,8 @@ async function run() {
   const reviewerToken = core2.getInput("reviewer-token", { required: true });
   const githubToken = core2.getInput("github-token", { required: true });
   const modelsToken = core2.getInput("models-token") || githubToken;
-  const model = core2.getInput("model") || "openai/gpt-4.1";
+  const modelInput = core2.getInput("model");
+  const model = normalizeModelInput(modelInput) || "openai/gpt-5";
   const approveOnClean = core2.getInput("approve-on-clean") !== "false";
   const maxDiffChars = parseInt(core2.getInput("max-diff-chars") || "120000", 10);
   const { context: context5 } = github_exports;
@@ -62971,7 +62973,7 @@ async function run() {
     return;
   }
   core2.info(`Diff size: ${diff.length} chars. Generating review with model: ${model}`);
-  const reviewResult = await generateReview(
+  const reviewResult = await generateReviewWithRetry(
     modelsToken,
     model,
     prContext.title,
@@ -62987,6 +62989,39 @@ async function run() {
     core2.info("approve-on-clean=false \u2014 downgraded APPROVE to COMMENT");
   }
   await postReview(reviewerToken, prContext, reviewResult);
+}
+async function generateReviewWithRetry(modelsToken, model, title, body, diff, maxDiffChars) {
+  let currentMaxDiffChars = maxDiffChars;
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await generateReview(modelsToken, model, title, body, diff, currentMaxDiffChars);
+    } catch (err) {
+      if (!isTokensLimitError(err) || attempt === maxAttempts) {
+        throw err;
+      }
+      const nextMaxDiffChars = Math.max(8e3, Math.floor(currentMaxDiffChars * 0.6));
+      core2.warning(
+        `Model input exceeded token limit. Retrying with smaller diff slice: ${currentMaxDiffChars} -> ${nextMaxDiffChars} chars (attempt ${attempt + 1}/${maxAttempts}).`
+      );
+      currentMaxDiffChars = nextMaxDiffChars;
+    }
+  }
+  throw new Error("Failed to generate review after retrying");
+}
+function normalizeModelInput(input) {
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+  const quotedWithDouble = trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2;
+  const quotedWithSingle = trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2;
+  if (quotedWithDouble || quotedWithSingle) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+function isTokensLimitError(err) {
+  if (!(err instanceof Error)) return false;
+  return err.message.includes("tokens_limit_reached");
 }
 async function extractPRContext(context5, owner, repo, githubToken) {
   const rawPR = context5.payload.pull_request;
@@ -63021,7 +63056,8 @@ run().catch((err) => {
 });
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  extractPRContext
+  extractPRContext,
+  normalizeModelInput
 });
 /*! Bundled license information:
 

@@ -11,13 +11,14 @@ import {
   reactToComment,
 } from './github-client';
 import { generateReview } from './models-client';
-import type { PRContext } from './types';
+import type { PRContext, ReviewResult } from './types';
 
 async function run(): Promise<void> {
   const reviewerToken = core.getInput('reviewer-token', { required: true });
   const githubToken = core.getInput('github-token', { required: true });
   const modelsToken = core.getInput('models-token') || githubToken;
-  const model = core.getInput('model') || 'openai/gpt-4.1';
+  const modelInput = core.getInput('model');
+  const model = normalizeModelInput(modelInput) || 'openai/gpt-5';
   const approveOnClean = core.getInput('approve-on-clean') !== 'false';
   const maxDiffChars = parseInt(core.getInput('max-diff-chars') || '120000', 10);
 
@@ -88,7 +89,7 @@ async function run(): Promise<void> {
   }
 
   core.info(`Diff size: ${diff.length} chars. Generating review with model: ${model}`);
-  const reviewResult = await generateReview(
+  const reviewResult = await generateReviewWithRetry(
     modelsToken,
     model,
     prContext.title,
@@ -108,6 +109,56 @@ async function run(): Promise<void> {
   }
 
   await postReview(reviewerToken, prContext, reviewResult);
+}
+
+async function generateReviewWithRetry(
+  modelsToken: string,
+  model: string,
+  title: string,
+  body: string,
+  diff: string,
+  maxDiffChars: number
+): Promise<ReviewResult> {
+  let currentMaxDiffChars = maxDiffChars;
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await generateReview(modelsToken, model, title, body, diff, currentMaxDiffChars);
+    } catch (err: unknown) {
+      if (!isTokensLimitError(err) || attempt === maxAttempts) {
+        throw err;
+      }
+
+      const nextMaxDiffChars = Math.max(8000, Math.floor(currentMaxDiffChars * 0.6));
+      core.warning(
+        `Model input exceeded token limit. Retrying with smaller diff slice: ` +
+          `${currentMaxDiffChars} -> ${nextMaxDiffChars} chars (attempt ${attempt + 1}/${maxAttempts}).`
+      );
+      currentMaxDiffChars = nextMaxDiffChars;
+    }
+  }
+
+  throw new Error('Failed to generate review after retrying');
+}
+
+export function normalizeModelInput(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+
+  // Accept accidental wrapping quotes such as: "openai/gpt-5" or 'openai/gpt-5'
+  const quotedWithDouble = trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2;
+  const quotedWithSingle = trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2;
+  if (quotedWithDouble || quotedWithSingle) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
+function isTokensLimitError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.message.includes('tokens_limit_reached');
 }
 
 export interface PRPayload {

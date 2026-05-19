@@ -8,7 +8,7 @@ An AI-powered GitHub Action that acts as a dedicated code reviewer on your pull 
 2. PairReviewer checks if there are **unresolved review threads** from the reviewer account
    - If yes → posts a reminder comment and waits
    - If no → proceeds to review
-3. The diff is sent to a GitHub Models AI (default: `gpt-4.1`)
+3. The diff is sent to a GitHub Models AI (default: `gpt-5`)
 4. The AI posts a review **as your reviewer account** with:
    - Inline comments on specific lines
    - An overall verdict: `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`
@@ -78,7 +78,7 @@ That's it. Open a PR and the reviewer account will post its first review within 
 | `reviewer-token` | Yes | (required) | PAT of the reviewer GitHub account |
 | `github-token` | No | `${{ github.token }}` | Token for reading PR data (threads, diff) |
 | `models-token` | No | falls back to `github-token` | Token for calling GitHub Models API. Required for org repos where `GITHUB_TOKEN` lacks Models access — use a personal PAT from an account with GitHub Models access |
-| `model` | No | `openai/gpt-4.1` | GitHub Models model ID |
+| `model` | No | `openai/gpt-5` | GitHub Models model ID |
 | `approve-on-clean` | No | `true` | Set to `false` to post COMMENT instead of APPROVE |
 | `max-diff-chars` | No | `120000` | Max diff characters sent to the model |
 
@@ -104,7 +104,8 @@ Any model available in [GitHub Marketplace Models](https://github.com/marketplac
 
 | Model ID | Best for |
 |----------|----------|
-| `openai/gpt-4.1` | Best overall code review quality (default) |
+| `openai/gpt-5` | Best overall code review quality (default) |
+| `openai/gpt-4.1` | Strong quality with smaller request limits |
 | `openai/gpt-4o` | Faster, slightly lower quality |
 | `meta/llama-4-maverick` | Open model alternative |
 
@@ -145,7 +146,7 @@ Now PRs cannot merge until the AI reviewer approves.
 
 - The action skips events triggered by the reviewer account itself to prevent infinite loops
 - If the AI returns invalid line numbers (outside the diff), inline comments fall back to the review body
-- Large diffs are truncated at `max-diff-chars`; increase for large PRs if needed
+- Large diffs are truncated at `max-diff-chars`; if a model still hits token limits, PairReviewer retries with a smaller diff slice
 - GitHub Models API calls use your repository's `GITHUB_TOKEN` (free tier rate limits apply)
 
 ## Publishing to GitHub Marketplace
