@@ -1,13 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { generateReview } from '../../src/models-client';
 
-// mockCreate is hoisted so the vi.mock factory can close over it.
-const mockCreate = vi.fn();
+// ---------------------------------------------------------------------------
+// Mock @azure-rest/ai-inference
+// ---------------------------------------------------------------------------
 
-vi.mock('openai', () => ({
-  // OpenAI is used with `new` — must be a regular function (not arrow) so it qualifies as a constructor.
-  default: vi.fn(function () {
-    return { chat: { completions: { create: mockCreate } } };
+const mockPost = vi.fn();
+
+vi.mock('@azure-rest/ai-inference', () => ({
+  default: vi.fn(() => ({
+    path: vi.fn(() => ({ post: mockPost })),
+  })),
+  isUnexpected: vi.fn((response: { status: string }) => parseInt(response.status) >= 400),
+}));
+
+vi.mock('@azure/core-auth', () => ({
+  AzureKeyCredential: vi.fn(function (key: string) {
+    return { key };
   }),
 }));
 
@@ -16,15 +25,28 @@ vi.mock('openai', () => ({
 // ---------------------------------------------------------------------------
 
 function setupResponse(content: string): void {
-  mockCreate.mockResolvedValue({ choices: [{ message: { content } }] });
-}
-
-function setupRejectWith(error: Error): void {
-  mockCreate.mockRejectedValue(error);
+  mockPost.mockResolvedValue({
+    status: '200',
+    body: { choices: [{ message: { content } }] },
+  });
 }
 
 function setupEmptyContent(): void {
-  mockCreate.mockResolvedValue({ choices: [{ message: { content: null } }] });
+  mockPost.mockResolvedValue({
+    status: '200',
+    body: { choices: [{ message: { content: null } }] },
+  });
+}
+
+function setupApiError(errorBody: object): void {
+  mockPost.mockResolvedValue({
+    status: '429',
+    body: { error: errorBody },
+  });
+}
+
+function setupRejectWith(error: Error): void {
+  mockPost.mockRejectedValue(error);
 }
 
 const BASE = {
@@ -46,9 +68,7 @@ async function runReview(content: string) {
 // ---------------------------------------------------------------------------
 
 describe('generateReview', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  beforeEach(() => vi.clearAllMocks());
 
   // ── Happy paths ────────────────────────────────────────────────────────────
 
@@ -89,34 +109,29 @@ describe('generateReview', () => {
         JSON.stringify({
           verdict: 'COMMENT',
           summary: 'Minor notes.',
-          comments: [
-            { path: 'src/widget.ts', line: 1, body: 'Consider renaming.', severity: 'nit' },
-          ],
+          comments: [{ path: 'src/widget.ts', line: 1, body: 'Consider renaming.', severity: 'nit' }],
         })
       );
 
       expect(result.verdict).toBe('COMMENT');
     });
 
-    it('passes the token to OpenAI as apiKey', async () => {
+    it('passes the token as AzureKeyCredential', async () => {
       setupResponse(JSON.stringify({ verdict: 'APPROVE', summary: 'OK.', comments: [] }));
 
       await generateReview('my-gh-token', BASE.model, BASE.title, BASE.body, BASE.diff, BASE.maxDiffChars);
 
-      const { default: OpenAI } = await import('openai');
-      expect(vi.mocked(OpenAI)).toHaveBeenCalledWith(
-        expect.objectContaining({ apiKey: 'my-gh-token' })
-      );
+      const { AzureKeyCredential } = await import('@azure/core-auth');
+      expect(vi.mocked(AzureKeyCredential)).toHaveBeenCalledWith('my-gh-token');
     });
 
-    it('passes the model ID to the completions API', async () => {
+    it('passes the model ID in the request body', async () => {
       setupResponse(JSON.stringify({ verdict: 'APPROVE', summary: 'OK.', comments: [] }));
 
       await generateReview(BASE.token, 'meta/llama-4', BASE.title, BASE.body, BASE.diff, BASE.maxDiffChars);
 
-      expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ model: 'meta/llama-4' })
-      );
+      const callBody = mockPost.mock.calls[0]![0].body;
+      expect(callBody.model).toBe('meta/llama-4');
     });
 
     it('includes PR title and body in the user prompt', async () => {
@@ -124,8 +139,8 @@ describe('generateReview', () => {
 
       await generateReview(BASE.token, BASE.model, 'My PR title', 'My PR body', BASE.diff, BASE.maxDiffChars);
 
-      const call = mockCreate.mock.calls[0]![0] as { messages: Array<{ content: string }> };
-      const userMsg = call.messages.find((m) => m.content.includes('My PR title'))!;
+      const messages = mockPost.mock.calls[0]![0].body.messages as Array<{ content: string }>;
+      const userMsg = messages.find((m) => m.content.includes('My PR title'))!;
       expect(userMsg).toBeDefined();
       expect(userMsg.content).toContain('My PR body');
     });
@@ -139,9 +154,7 @@ describe('generateReview', () => {
         JSON.stringify({
           verdict: 'APPROVE',
           summary: 'Contradictory response.',
-          comments: [
-            { path: 'src/a.ts', line: 1, body: 'Critical bug.', severity: 'blocking' },
-          ],
+          comments: [{ path: 'src/a.ts', line: 1, body: 'Critical bug.', severity: 'blocking' }],
         })
       );
 
@@ -222,9 +235,7 @@ describe('generateReview', () => {
     });
 
     it('treats a missing comments field as an empty array', async () => {
-      const result = await runReview(
-        JSON.stringify({ verdict: 'APPROVE', summary: 'Clean.' })
-      );
+      const result = await runReview(JSON.stringify({ verdict: 'APPROVE', summary: 'Clean.' }));
 
       expect(result.comments).toEqual([]);
     });
@@ -239,8 +250,8 @@ describe('generateReview', () => {
 
       await generateReview(BASE.token, BASE.model, BASE.title, BASE.body, hugeDiff, 50_000);
 
-      const call = mockCreate.mock.calls[0]![0] as { messages: Array<{ content: string }> };
-      const userMsg = call.messages.find((m) => m.content.includes('xxxx'))!;
+      const messages = mockPost.mock.calls[0]![0].body.messages as Array<{ content: string }>;
+      const userMsg = messages.find((m) => m.content.includes('xxxx'))!;
       expect(userMsg.content).toContain('truncated');
       const match = userMsg.content.match(/x+/)?.[0] ?? '';
       expect(match.length).toBeLessThanOrEqual(50_000);
@@ -248,12 +259,11 @@ describe('generateReview', () => {
 
     it('sends the full diff when it is within the limit', async () => {
       setupResponse(JSON.stringify({ verdict: 'APPROVE', summary: 'OK.', comments: [] }));
-      const smallDiff = 'small diff sentinel';
 
-      await generateReview(BASE.token, BASE.model, BASE.title, BASE.body, smallDiff, 120_000);
+      await generateReview(BASE.token, BASE.model, BASE.title, BASE.body, 'small diff sentinel', 120_000);
 
-      const call = mockCreate.mock.calls[0]![0] as { messages: Array<{ content: string }> };
-      const userMsg = call.messages.find((m) => m.content.includes('small diff sentinel'))!;
+      const messages = mockPost.mock.calls[0]![0].body.messages as Array<{ content: string }>;
+      const userMsg = messages.find((m) => m.content.includes('small diff sentinel'))!;
       expect(userMsg).toBeDefined();
       expect(userMsg.content).not.toContain('truncated');
     });
@@ -268,6 +278,14 @@ describe('generateReview', () => {
       await expect(
         generateReview(BASE.token, BASE.model, BASE.title, BASE.body, BASE.diff, BASE.maxDiffChars)
       ).rejects.toThrow('empty response');
+    });
+
+    it('throws when the API returns an unexpected error status', async () => {
+      setupApiError({ message: 'Rate limit exceeded', code: '429' });
+
+      await expect(
+        generateReview(BASE.token, BASE.model, BASE.title, BASE.body, BASE.diff, BASE.maxDiffChars)
+      ).rejects.toThrow('GitHub Models API error');
     });
 
     it('throws when the response is not valid JSON', async () => {
@@ -302,12 +320,12 @@ describe('generateReview', () => {
       await expect(runReview(JSON.stringify([1, 2, 3]))).rejects.toThrow('not an object');
     });
 
-    it('propagates OpenAI API errors', async () => {
-      setupRejectWith(new Error('Rate limit exceeded'));
+    it('propagates network-level errors', async () => {
+      setupRejectWith(new Error('ECONNREFUSED'));
 
       await expect(
         generateReview(BASE.token, BASE.model, BASE.title, BASE.body, BASE.diff, BASE.maxDiffChars)
-      ).rejects.toThrow('Rate limit exceeded');
+      ).rejects.toThrow('ECONNREFUSED');
     });
   });
 });

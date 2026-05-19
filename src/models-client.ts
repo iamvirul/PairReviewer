@@ -1,7 +1,8 @@
-import OpenAI from 'openai';
+import ModelClient, { isUnexpected } from '@azure-rest/ai-inference';
+import { AzureKeyCredential } from '@azure/core-auth';
 import type { ReviewResult, ReviewComment, CommentSeverity, ReviewVerdict } from './types';
 
-const GITHUB_MODELS_BASE_URL = 'https://models.inference.ai.azure.com';
+const GITHUB_MODELS_ENDPOINT = 'https://models.github.ai/inference';
 
 const VALID_VERDICTS = new Set<ReviewVerdict>(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
 const VALID_SEVERITIES = new Set<CommentSeverity>(['blocking', 'suggestion', 'nit']);
@@ -78,24 +79,30 @@ export async function generateReview(
   diff: string,
   maxDiffChars: number
 ): Promise<ReviewResult> {
-  const client = new OpenAI({
-    baseURL: GITHUB_MODELS_BASE_URL,
-    apiKey: githubToken,
-  });
+  const client = ModelClient(
+    GITHUB_MODELS_ENDPOINT,
+    new AzureKeyCredential(githubToken)
+  );
 
   const userPrompt = buildUserPrompt(title, body, diff, maxDiffChars);
 
-  const response = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userPrompt },
-    ],
-    temperature: 0.1,
-    response_format: { type: 'json_object' },
+  const response = await client.path('/chat/completions').post({
+    body: {
+      model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+    },
   });
 
-  const rawContent = response.choices[0]?.message?.content;
+  if (isUnexpected(response)) {
+    throw new Error(`GitHub Models API error: ${JSON.stringify(response.body.error)}`);
+  }
+
+  const rawContent = response.body.choices[0]?.message?.content;
   if (!rawContent) {
     throw new Error('GitHub Models API returned an empty response');
   }
