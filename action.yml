@@ -44,6 +44,25 @@ inputs:
     required: false
     default: 'true'
 
+  wait-for-other-workflows-before-approve:
+    description: >
+      When true, APPROVE verdicts wait until other workflow runs for the same commit are completed.
+      If timeout is reached, PairReviewer posts COMMENT instead of APPROVE.
+    required: false
+    default: 'true'
+
+  wait-for-other-workflows-timeout-seconds:
+    description: >
+      Max seconds to wait for other workflow runs to complete before downgrading APPROVE to COMMENT.
+    required: false
+    default: '300'
+
+  wait-for-other-workflows-poll-seconds:
+    description: >
+      Poll interval in seconds when waiting for other workflow runs.
+    required: false
+    default: '10'
+
   max-diff-chars:
     description: >
       Maximum characters of diff to send to the model. Diffs exceeding this are truncated.

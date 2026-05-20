@@ -9,6 +9,7 @@ import {
   postReview,
   postBlockedComment,
   reactToComment,
+  waitForOtherWorkflowRunsToComplete,
 } from './github-client';
 import { generateReview } from './models-client';
 import type { PRContext, ReviewResult } from './types';
@@ -20,6 +21,15 @@ async function run(): Promise<void> {
   const modelInput = core.getInput('model');
   const model = normalizeModelInput(modelInput) || 'openai/gpt-4.1';
   const approveOnClean = core.getInput('approve-on-clean') !== 'false';
+  const waitForOtherWorkflowsBeforeApprove = core.getInput('wait-for-other-workflows-before-approve') !== 'false';
+  const waitTimeoutSeconds = parseInt(
+    core.getInput('wait-for-other-workflows-timeout-seconds') || '300',
+    10
+  );
+  const waitPollIntervalSeconds = parseInt(
+    core.getInput('wait-for-other-workflows-poll-seconds') || '10',
+    10
+  );
   const maxDiffChars = parseInt(core.getInput('max-diff-chars') || '120000', 10);
 
   const { context } = github;
@@ -106,6 +116,33 @@ async function run(): Promise<void> {
   if (!approveOnClean && reviewResult.verdict === 'APPROVE') {
     reviewResult.verdict = 'COMMENT';
     core.info('approve-on-clean=false — downgraded APPROVE to COMMENT');
+  }
+
+  if (reviewResult.verdict === 'APPROVE' && waitForOtherWorkflowsBeforeApprove) {
+    const currentRunId = Number(process.env['GITHUB_RUN_ID'] || '0');
+    if (currentRunId > 0) {
+      const waitResult = await waitForOtherWorkflowRunsToComplete(
+        githubToken,
+        prContext,
+        currentRunId,
+        waitTimeoutSeconds,
+        waitPollIntervalSeconds
+      );
+
+      if (!waitResult.completed) {
+        reviewResult.verdict = 'COMMENT';
+        reviewResult.summary =
+          `${reviewResult.summary}\n\n` +
+          `Approval deferred: ${waitResult.pendingCount} other workflow run(s) are still in progress for this commit.`;
+        core.warning(
+          `Approval deferred because ${waitResult.pendingCount} other workflow run(s) are still in progress.`
+        );
+      }
+    } else {
+      core.warning(
+        'GITHUB_RUN_ID is unavailable. Skipping workflow-completion wait before approval.'
+      );
+    }
   }
 
   await postReview(reviewerToken, prContext, reviewResult);

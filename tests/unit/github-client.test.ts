@@ -8,6 +8,7 @@ import {
   getPRDiff,
   postReview,
   postBlockedComment,
+  waitForOtherWorkflowRunsToComplete,
 } from '../../src/github-client';
 import type { PRContext, ReviewResult, ReviewThread } from '../../src/types';
 
@@ -45,6 +46,7 @@ function makeOctokit(overrides: Record<string, unknown> = {}) {
       users: { getAuthenticated: vi.fn() },
       pulls: { createReview: vi.fn() },
       issues: { createComment: vi.fn() },
+      actions: { listWorkflowRunsForRepo: vi.fn() },
     },
     ...overrides,
   };
@@ -375,5 +377,46 @@ describe('postBlockedComment', () => {
 
     const call = vi.mocked(octokit.rest.issues.createComment).mock.calls[0]![0];
     expect(call.body).toMatch(/\b1\b.*thread[^s]/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// waitForOtherWorkflowRunsToComplete
+// ---------------------------------------------------------------------------
+
+describe('waitForOtherWorkflowRunsToComplete', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns completed when no other workflow runs are pending', async () => {
+    const octokit = makeOctokit();
+    vi.mocked(octokit.rest.actions.listWorkflowRunsForRepo).mockResolvedValue({
+      data: {
+        workflow_runs: [
+          { id: 1001, status: 'in_progress' },
+          { id: 2002, status: 'completed' },
+        ],
+      },
+    } as never);
+    mockOctokit(octokit);
+
+    const result = await waitForOtherWorkflowRunsToComplete('token', ctx, 1001, 30, 5);
+    expect(result).toEqual({ completed: true, pendingCount: 0 });
+  });
+
+  it('returns not completed when timeout is hit and runs are still pending', async () => {
+    const octokit = makeOctokit();
+    vi.mocked(octokit.rest.actions.listWorkflowRunsForRepo).mockResolvedValue({
+      data: {
+        workflow_runs: [
+          { id: 1001, status: 'in_progress' },
+          { id: 3003, status: 'queued' },
+        ],
+      },
+    } as never);
+    mockOctokit(octokit);
+
+    const result = await waitForOtherWorkflowRunsToComplete('token', ctx, 1001, 1, 1);
+    expect(result.completed).toBe(false);
+    expect(result.pendingCount).toBe(1);
   });
 });

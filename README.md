@@ -80,6 +80,9 @@ That's it. Open a PR and the reviewer account will post its first review within 
 | `models-token` | No | falls back to `github-token` | Token for calling GitHub Models API. Required for org repos where `GITHUB_TOKEN` lacks Models access — use a personal PAT from an account with GitHub Models access |
 | `model` | No | `openai/gpt-4.1` | GitHub Models model ID |
 | `approve-on-clean` | No | `true` | Set to `false` to post COMMENT instead of APPROVE |
+| `wait-for-other-workflows-before-approve` | No | `true` | Wait for other workflow runs on the same commit before posting APPROVE |
+| `wait-for-other-workflows-timeout-seconds` | No | `300` | Max wait time before downgrading APPROVE to COMMENT |
+| `wait-for-other-workflows-poll-seconds` | No | `10` | Poll interval while waiting for other workflow runs |
 | `max-diff-chars` | No | `120000` | Max diff characters sent to the model |
 
 ## Using in an Organisation Repo
@@ -147,6 +150,7 @@ Now PRs cannot merge until the AI reviewer approves.
 - The action skips events triggered by the reviewer account itself to prevent infinite loops
 - If the AI returns invalid line numbers (outside the diff), inline comments fall back to the review body
 - Large diffs are truncated at `max-diff-chars`; if a model still hits token limits, PairReviewer retries with a smaller diff slice
+- APPROVE can be deferred until other workflows complete (useful for tools like CodeRabbit that may comment later)
 - GitHub Models API calls use your repository's `GITHUB_TOKEN` (free tier rate limits apply)
 
 ## Publishing to GitHub Marketplace

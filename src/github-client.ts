@@ -177,6 +177,54 @@ export async function postBlockedComment(
   });
 }
 
+export async function waitForOtherWorkflowRunsToComplete(
+  githubToken: string,
+  context: PRContext,
+  currentRunId: number,
+  timeoutSeconds: number,
+  pollIntervalSeconds: number
+): Promise<{ completed: boolean; pendingCount: number }> {
+  const octokit = getOctokit(githubToken);
+  const timeoutMs = Math.max(1, timeoutSeconds) * 1000;
+  const pollMs = Math.max(1, pollIntervalSeconds) * 1000;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const { data } = await octokit.rest.actions.listWorkflowRunsForRepo({
+      owner: context.owner,
+      repo: context.repo,
+      head_sha: context.headSha,
+      per_page: 100,
+    });
+
+    const pendingRuns = data.workflow_runs.filter((run) => {
+      if (run.id === currentRunId) return false;
+      return run.status !== 'completed';
+    });
+
+    if (pendingRuns.length === 0) {
+      return { completed: true, pendingCount: 0 };
+    }
+
+    core.info(
+      `Waiting for ${pendingRuns.length} other workflow run(s) to complete before approving...`
+    );
+    await sleep(pollMs);
+  }
+
+  const { data } = await octokit.rest.actions.listWorkflowRunsForRepo({
+    owner: context.owner,
+    repo: context.repo,
+    head_sha: context.headSha,
+    per_page: 100,
+  });
+  const pendingCount = data.workflow_runs.filter(
+    (run) => run.id !== currentRunId && run.status !== 'completed'
+  ).length;
+
+  return { completed: false, pendingCount };
+}
+
 export async function reactToComment(
   reviewerToken: string,
   owner: string,
@@ -241,4 +289,8 @@ function buildFallbackBody(
     `### Inline feedback\n\n` +
     `${commentBlock}`
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
