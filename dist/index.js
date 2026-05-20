@@ -58821,6 +58821,41 @@ There ${unresolvedCount === 1 ? "is" : "are"} **${unresolvedCount}** unresolved 
     body
   });
 }
+async function waitForOtherWorkflowRunsToComplete(githubToken, context5, currentRunId, timeoutSeconds, pollIntervalSeconds) {
+  const octokit = getOctokit(githubToken);
+  const timeoutMs = Math.max(1, timeoutSeconds) * 1e3;
+  const pollMs = Math.max(1, pollIntervalSeconds) * 1e3;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const { data: data2 } = await octokit.rest.actions.listWorkflowRunsForRepo({
+      owner: context5.owner,
+      repo: context5.repo,
+      head_sha: context5.headSha,
+      per_page: 100
+    });
+    const pendingRuns = data2.workflow_runs.filter((run2) => {
+      if (run2.id === currentRunId) return false;
+      return run2.status !== "completed";
+    });
+    if (pendingRuns.length === 0) {
+      return { completed: true, pendingCount: 0 };
+    }
+    core.info(
+      `Waiting for ${pendingRuns.length} other workflow run(s) to complete before approving...`
+    );
+    await sleep(pollMs);
+  }
+  const { data } = await octokit.rest.actions.listWorkflowRunsForRepo({
+    owner: context5.owner,
+    repo: context5.repo,
+    head_sha: context5.headSha,
+    per_page: 100
+  });
+  const pendingCount = data.workflow_runs.filter(
+    (run2) => run2.id !== currentRunId && run2.status !== "completed"
+  ).length;
+  return { completed: false, pendingCount };
+}
 async function reactToComment(reviewerToken, owner, repo, commentId) {
   const octokit = getOctokit(reviewerToken);
   await octokit.rest.reactions.createForIssueComment({
@@ -58874,6 +58909,9 @@ Inline comments attempted: \`${comments.length}\`
 ### Inline feedback
 
 ${commentBlock}`;
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // node_modules/tslib/tslib.es6.mjs
@@ -63034,6 +63072,15 @@ async function run() {
   const modelInput = core2.getInput("model");
   const model = normalizeModelInput(modelInput) || "openai/gpt-4.1";
   const approveOnClean = core2.getInput("approve-on-clean") !== "false";
+  const waitForOtherWorkflowsBeforeApprove = core2.getInput("wait-for-other-workflows-before-approve") !== "false";
+  const waitTimeoutSeconds = parseInt(
+    core2.getInput("wait-for-other-workflows-timeout-seconds") || "300",
+    10
+  );
+  const waitPollIntervalSeconds = parseInt(
+    core2.getInput("wait-for-other-workflows-poll-seconds") || "10",
+    10
+  );
   const maxDiffChars = parseInt(core2.getInput("max-diff-chars") || "120000", 10);
   const { context: context5 } = github_exports;
   const { owner, repo } = context5.repo;
@@ -63099,6 +63146,31 @@ async function run() {
   if (!approveOnClean && reviewResult.verdict === "APPROVE") {
     reviewResult.verdict = "COMMENT";
     core2.info("approve-on-clean=false \u2014 downgraded APPROVE to COMMENT");
+  }
+  if (reviewResult.verdict === "APPROVE" && waitForOtherWorkflowsBeforeApprove) {
+    const currentRunId = Number(process.env["GITHUB_RUN_ID"] || "0");
+    if (currentRunId > 0) {
+      const waitResult = await waitForOtherWorkflowRunsToComplete(
+        githubToken,
+        prContext,
+        currentRunId,
+        waitTimeoutSeconds,
+        waitPollIntervalSeconds
+      );
+      if (!waitResult.completed) {
+        reviewResult.verdict = "COMMENT";
+        reviewResult.summary = `${reviewResult.summary}
+
+Approval deferred: ${waitResult.pendingCount} other workflow run(s) are still in progress for this commit.`;
+        core2.warning(
+          `Approval deferred because ${waitResult.pendingCount} other workflow run(s) are still in progress.`
+        );
+      }
+    } else {
+      core2.warning(
+        "GITHUB_RUN_ID is unavailable. Skipping workflow-completion wait before approval."
+      );
+    }
   }
   await postReview(reviewerToken, prContext, reviewResult);
 }
